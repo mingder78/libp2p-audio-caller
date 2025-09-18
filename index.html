@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>libp2p WebRTC Audio Chat</title>
+</head>
+<body>
+  <div id="app">
+    <h1>libp2p WebRTC Audio Chat</h1>
+    <button id="startAudio">Start Local Audio</button>
+    <button id="connect">Connect to Peer</button>
+    <input id="remoteMultiaddr" placeholder="Relay Multiaddr (e.g., /ip4/127.0.0.1/tcp/9001/p2p/12D3KooW...)">
+    <input id="remotePeerId" placeholder="Remote Peer ID (e.g., 12D3KooW...)">
+    <audio id="localAudio" autoplay muted></audio>
+    <audio id="remoteAudio" autoplay></audio>
+    <div id="status"></div>
+    <div id="peers"></div>
+  </div>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
