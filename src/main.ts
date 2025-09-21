@@ -54,15 +54,6 @@ async function createNode() {
     }
   });
 
-  // Handle peer connections
-  libp2p.addEventListener('peer:connect', (evt) => {
-    const peerId = evt.detail.toString();
-    updatePeers();
-    updateStatus(`Connected to peer: ${peerId}`);
-    // On connect, dial audio protocol
-    dialAudioProtocol(peerId);
-  });
-
   // Custom audio protocol handler (for signaling if needed; audio via RTC)
   await libp2p.handle(AUDIO_PROTOCOL, async ({ stream, connection }) => {
     // Here, you could exchange custom signals, but we use RTC directly
@@ -77,9 +68,69 @@ async function createNode() {
     );
   });
 
+  console.log('✅ Caller Local PeerID:', libp2p.peerId.toString())
   await libp2p.start();
   updateStatus('libp2p Node Started. Local Peer ID: ' + libp2p.peerId.toString());
   updatePeers();
+
+  // On new connection, setup track listener
+  libp2p.addEventListener('peer:connect', ({ detail: connection }) => {
+    console.log(connection)
+    console.log('🔗 connected to', connection.remotePeer.toString())
+
+    // WebRTC connections embed an RTCPeerConnection
+    // we need to get it so we can add tracks, listen for tracks
+    const rtcConn = (connection as any).peerConnection as RTCPeerConnection | undefined
+
+    if (rtcConn) {
+      // listen for remote audio
+      rtcConn.addEventListener('track', (evt) => {
+        const [remoteStream] = evt.streams
+        if (!remoteStream) return
+        const audioEl = document.createElement('audio')
+        audioEl.srcObject = remoteStream
+        audioEl.autoplay = true
+        document.body.appendChild(audioEl)
+        console.log('🎧 Received remote stream tracks')
+      })
+    } else {
+      console.warn('⚠️ peer:connect but no RTCPeerConnection found on this connection')
+    }
+  })
+
+}
+// UI to dial
+const input = document.createElement('input')
+input.placeholder = 'Remote PeerId or Multiaddr'
+
+const btn = document.createElement('button')
+btn.textContent = 'Connect & send audio'
+
+document.body.append(input, btn)
+
+btn.onclick = async () => {
+  const target = input.value.trim()
+  if (!target) {
+    console.warn('Enter a peer address/ID')
+    return
+  }
+
+  console.log('📞 Dialing', target)
+  const conn = await libp2p.dial(multiaddr(target))
+  console.log('➤ Dial success')
+
+  // retrieve RTCPeerConnection
+  const rtcConn = (conn as any).peerConnection as RTCPeerConnection | undefined
+  if (!rtcConn) {
+    console.warn('No RTCPeerConnection on dialed connection')
+    return
+  }
+
+  // add local audio tracks
+  for (const track of localStream.getTracks()) {
+    rtcConn.addTrack(track, localStream)
+  }
+  console.log('🎤 Local audio tracks added')
 }
 
 // Update peers list
@@ -104,14 +155,14 @@ connectBtn.addEventListener('click', async () => {
   const remotePeerStr = remotePeerInput.value;
 
   try {
-  const peerId = peerIdFromString(remotePeerStr);
-  console.log('Valid Peer ID:', peerId.toString());
-  const peerId2 = peerIdFromString(remotePeerStr, { decode: base58btc })
+    const peerId = peerIdFromString(remotePeerStr);
+    console.log('Valid Peer ID:', peerId.toString());
+    const peerId2 = peerIdFromString(remotePeerStr, { decode: base58btc })
 
-console.log(peerId2.toString())
-} catch (err) {
-  console.error('Invalid Peer ID:', err);
-}
+    console.log(peerId2.toString())
+  } catch (err) {
+    console.error('Invalid Peer ID:', err);
+  }
   if (!relayMaStr || !remotePeerStr) {
     updateStatus('Enter relay multiaddr and remote peer ID');
     return;
@@ -121,6 +172,7 @@ console.log(peerId2.toString())
     // Dial remote peer via orelay (libp2p auto-reserves relay if needed)
     let remotePeerMultiAddress = relayMaStr + '/p2p-circuit/p2p/' + remotePeerStr
     console.log(remotePeerMultiAddress)
+    input.value = remotePeerMultiAddress;
     await libp2p.dial(multiaddr(remotePeerMultiAddress));
     updateStatus('Dialing remote peer...');
 
@@ -128,7 +180,7 @@ console.log(peerId2.toString())
     await libp2p.dial(relayMa); // Dial relay for discovery
     updateStatus('Dialed relay');
 
-    } catch (err) {
+  } catch (err) {
     updateStatus('Connection error: ' + err);
   }
 });
