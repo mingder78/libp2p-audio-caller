@@ -1,5 +1,5 @@
 {
-  "name": "libp2p-audio-chat",
+  "name": "libp2p-audio-caller",
   "private": true,
   "version": "0.0.0",
   "type": "module",
