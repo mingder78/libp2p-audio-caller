@@ -1,7 +1,7 @@
 {
   "name": "libp2p-audio-caller",
   "private": true,
-  "version": "0.0.0",
+  "version": "0.3.0",
   "type": "module",
   "license": "Apache-2.0 OR MIT",
   "scripts": {
@@ -29,6 +29,7 @@
     "@libp2p/webtransport": "^5.0.51",
     "install": "^0.13.0",
     "libp2p": "^2.10.0",
-    "multiformats": "^13.4.1"
+    "multiformats": "^13.4.1",
+    "simple-peer": "^9.11.1"
   }
 }

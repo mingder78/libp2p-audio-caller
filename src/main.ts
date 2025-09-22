@@ -3,11 +3,10 @@ import { noise } from '@chainsafe/libp2p-noise';
 import { yamux } from '@chainsafe/libp2p-yamux';
 import { webRTC } from '@libp2p/webrtc';
 import { webSockets } from '@libp2p/websockets';
-import { circuitRelayTransport } from '@libp2p/circuit-relay-v2';
+import { circuitRelayTransport, circuitRelayServer } from '@libp2p/circuit-relay-v2';
 import { identify } from '@libp2p/identify';
 import { multiaddr } from '@multiformats/multiaddr';
-import * as pipe from 'it-pipe';
-import { fromString as uint8FromString } from 'uint8arrays/from-string';
+import * as pipe from 'it-pipe'; ``
 import { toString as uint8ToString } from 'uint8arrays/to-string';
 import { peerIdFromString } from '@libp2p/peer-id';
 import { base58btc } from 'multiformats/bases/base58'
@@ -22,6 +21,18 @@ const connectBtn = document.getElementById('connect');
 const remoteMaInput = document.getElementById('remoteMultiaddr');
 const remotePeerInput = document.getElementById('remotePeerId');
 
+/** --- helpers --- **/
+function concatChunks(chunks: Uint8Array[]) {
+  const total = chunks.reduce((s, c) => s + c.length, 0)
+  const out = new Uint8Array(total)
+  let off = 0
+  for (const c of chunks) {
+    out.set(c, off)
+    off += c.length
+  }
+  return out
+}
+
 let libp2p;
 let localStream;
 let peerConnection; // Underlying RTCPeerConnection for audio
@@ -33,10 +44,10 @@ function updateStatus(msg) {
 }
 
 // Create libp2p node with WebRTC + Relay support
-async function createNode() {
+async function main() {
   libp2p = await createLibp2p({
     addresses: {
-      listen: ['/webrtc', '/p2p-circuit'] // Listen for relayed WebRTC
+      listen: ['/webrtc', '/p2p-circuit', '/p2p-circuit/webrtc'] // Listen for relayed WebRTC
     },
     transports: [
       webRTC({
@@ -50,7 +61,23 @@ async function createNode() {
     connectionEncrypters: [noise()],
     streamMuxers: [yamux()],
     services: {
-      identify: identify()
+      identify: identify(),
+      relay: circuitRelayServer({
+        reservations: {  // Configures reservation limits (default: unlimited for testing)
+          maxReservations: 50,  // Max concurrent reservations
+          maxReservationsPerPeer: 10,  // Per client
+          reservationDuration: 300000,  // 5 minutes in ms (renewable)
+          reservationTTL: 600000  // Total lifetime
+        },
+        connections: {  // Limits relayed connections
+          maxIncoming: 100,
+          maxOutgoing: 100,
+          maxPerPeer: 5
+        },
+        // ACL: undefined  // No ACL = accepts reservations from any peer (key for "true" reservations)
+        // For production: ACL: { allow: ['QmSpecificPeerID'] } to restrict
+        metrics: { enabled: true }  // Optional: Enable Prometheus metrics
+      })
     }
   });
 
@@ -73,13 +100,16 @@ async function createNode() {
   updateStatus('libp2p Node Started. Local Peer ID: ' + libp2p.peerId.toString());
   updatePeers();
 
+  // Handle peer connections
   // On new connection, setup track listener
-  libp2p.addEventListener('peer:connect', ({ detail: connection }) => {
-    console.log(connection)
-    console.log('🔗 connected to', connection.remotePeer.toString())
+  libp2p.addEventListener('peer:connect', (evt) => {
+    console.log(evt)
+    const peerId = evt.detail.toString();
+    console.log('-----> 🔗 connected to', peerId)
 
     // WebRTC connections embed an RTCPeerConnection
     // we need to get it so we can add tracks, listen for tracks
+
     const rtcConn = (connection as any).peerConnection as RTCPeerConnection | undefined
 
     if (rtcConn) {
@@ -97,7 +127,6 @@ async function createNode() {
       console.warn('⚠️ peer:connect but no RTCPeerConnection found on this connection')
     }
   })
-
 }
 // UI to dial
 const input = document.createElement('input')
@@ -116,21 +145,29 @@ btn.onclick = async () => {
   }
 
   console.log('📞 Dialing', target)
+  console.log('➤before  Dial')
   const conn = await libp2p.dial(multiaddr(target))
+  const rtcConn = conn.maConn.peerConnection || undefined
   console.log('➤ Dial success')
 
-  // retrieve RTCPeerConnection
-  const rtcConn = (conn as any).peerConnection as RTCPeerConnection | undefined
   if (!rtcConn) {
     console.warn('No RTCPeerConnection on dialed connection')
     return
   }
+  console.log(rtcConn)
 
   // add local audio tracks
+
+
+  // Add local audio tracks to RTCPeerConnection
   for (const track of localStream.getTracks()) {
-    rtcConn.addTrack(track, localStream)
+    rtcConn.addTrack(track, localStream);
+    console.log(`🎤 Added track: ${track.kind} (${track.id})`);
   }
   console.log('🎤 Local audio tracks added')
+
+  console.log('➤ Dial success, audo done')
+
 }
 
 // Update peers list
@@ -170,11 +207,11 @@ connectBtn.addEventListener('click', async () => {
 
   try {
     // Dial remote peer via orelay (libp2p auto-reserves relay if needed)
-    let remotePeerMultiAddress = relayMaStr + '/p2p-circuit/p2p/' + remotePeerStr
+    let remotePeerMultiAddress = relayMaStr + '/p2p-circuit/webrtc/p2p/' + remotePeerStr
     console.log(remotePeerMultiAddress)
-    input.value = remotePeerMultiAddress;
-    await libp2p.dial(multiaddr(remotePeerMultiAddress));
-    updateStatus('Dialing remote peer...');
+    input.value = remotePeerMultiAddress; // add for use another btn to dial for audio
+    // await libp2p.dial(multiaddr(remotePeerMultiAddress));
+    updateStatus('no Dialing remote peer...');
 
     const relayMa = multiaddr(relayMaStr);
     await libp2p.dial(relayMa); // Dial relay for discovery
@@ -185,57 +222,4 @@ connectBtn.addEventListener('click', async () => {
   }
 });
 
-// Dial audio protocol on connection (setup RTC for media)
-async function dialAudioProtocol(peerIdStr) {
-  if (!localStream) {
-    updateStatus('Start local audio first');
-    return;
-  }
-
-  try {
-    // Access underlying WebRTC connection (libp2p exposes via connection.newStream)
-    const connection = libp2p.connectionManager.get(peerIdStr); // Get existing conn
-    if (!connection) throw new Error('No connection');
-
-    // Create or get RTCPeerConnection (hybrid: use libp2p conn for signaling, RTC for media)
-    // Note: In full libp2p, WebRTC transport uses internal RTC; here we create a separate one for audio
-    peerConnection = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    });
-
-    // Add local audio track
-    localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-    // Handle remote stream
-    peerConnection.addEventListener('track', (event) => {
-      remoteAudio.srcObject = event.streams[0];
-      updateStatus('Remote audio connected');
-    });
-
-    // Signaling via libp2p stream (exchange SDP/ICE)
-    const stream = await connection.newStream(AUDIO_PROTOCOL);
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-    await pipe([uint8FromString(JSON.stringify(offer))], stream);
-
-    // Receive remote SDP (simplified; in prod, loop for ICE candidates)
-    const remoteDesc = await pipe(stream, async (source) => {
-      for await (const chunk of source) {
-        console.log(chunk.length)
-        return JSON.parse(uint8ToString(chunk.slice(0, chunk.length)));
-      }
-    });
-    await peerConnection.setRemoteDescription(remoteDesc);
-
-    // Create answer and send back
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-    await pipe([uint8FromString(JSON.stringify(answer))], stream);
-
-    updateStatus('Audio protocol dialed');
-  } catch (err) {
-    updateStatus('Audio setup error: ' + err.message);
-  }
-}
-
-createNode();
+main();
