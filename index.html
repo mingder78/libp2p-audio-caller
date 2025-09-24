@@ -1,10 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>libp2p WebRTC Audio Chat</title>
 </head>
+
 <body>
   <div id="app">
     <h1>libp2p WebRTC Audio Chat - caller </h1>
@@ -17,6 +19,18 @@
     <div id="status"></div>
     <div id="peers"></div>
   </div>
+  <h1>🔊 WebRTC + libp2p Audio Chat</h1>
+
+  <div>
+    <button id="startBtn">Start Node</button>
+    <span>My PeerId: <code id="peerId"></code></span>
+  </div>
+
+  <div style="margin-top: 1em;">
+    <input id="remotePeer" placeholder="Enter remote PeerId" />
+    <button id="connectBtn">Connect & Send Audio</button>
+  </div>
   <script type="module" src="src/main.js"></script>
 </body>
+
 </html>
