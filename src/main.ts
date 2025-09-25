@@ -11,10 +11,11 @@ import * as pipe from 'it-pipe'; ``
 import { toString as uint8ToString } from 'uint8arrays/to-string';
 import { peerIdFromString } from '@libp2p/peer-id';
 import { base58btc } from 'multiformats/bases/base58'
-import { createNode, registerSignaling, sendSignal, AUDIO_PROTOCOL } from './lib/webrtc-signal'
+import { createNode, registerSignaling, sendSignal, AUDIO_PROTOCOL, setupPeerConnection } from './lib/webrtc-signal'
 
 const app = document.getElementById('app');
 const status = document.getElementById('status');
+const peerId = document.getElementById('peerId');
 const peersDiv = document.getElementById('peers');
 const localAudio = document.getElementById('localAudio');
 const remoteAudio = document.getElementById('remoteAudio');
@@ -25,36 +26,7 @@ const remoteMaInput = document.getElementById('remoteMultiaddr');
 const remotePeerInput = document.getElementById('remotePeerId');
 const input = document.getElementById('remotePeer')
 
-// 1. Create PeerConnection (for audio)
-async function createPeerConnection(node: any) {
-  pc = new RTCPeerConnection()
-
-  // play remote audio
-  const audioEl = document.createElement('audio')
-  audioEl.autoplay = true
-  pc.ontrack = (event) => {
-    audioEl.srcObject = event.streams[0]
-  }
-  document.body.appendChild(audioEl)
-
-  // add microphone track
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-  stream.getTracks().forEach(track => pc.addTrack(track, stream))
-
-  // handle ICE
-  pc.onicecandidate = async (event) => {
-    if (event.candidate) {
-      console.log('📤 ICE candidate', event.candidate)
-      // you’d normally call sendSignal here once you know the remote peer
-      // but leave it empty for now
-    }
-  }
-
-  await registerSignaling(node, pc)
-  return pc
-}
-
-
+let pc;
 let libp2p;
 let localStream;
 let peerConnection; // Underlying RTCPeerConnection for audio
@@ -108,22 +80,10 @@ async function connectPeer() {
 // Create libp2p node with WebRTC + Relay support
 async function main() {
   libp2p = await createNode()
-
-  // Custom audio protocol handler (for signaling if needed; audio via RTC)
-  await libp2p.handle(AUDIO_PROTOCOL, async ({ stream, connection }) => {
-    // Here, you could exchange custom signals, but we use RTC directly
-    pipe(
-      stream,
-      async function* (source) {
-        for await (const msg of source) {
-          console.log('Received audio signal:', uint8ToString(msg.slice(0, msg.length)));
-          // e.g., Handle SDP/ICE if extending signaling
-        }
-      }
-    );
-  });
+ // pc = await setupPeerConnection(libp2p)
 
   console.log('✅ Caller Local PeerID:', libp2p.peerId.toString())
+  peerId.value = libp2p.peerId.toString();
   await libp2p.start();
   updateStatus('libp2p Node Started. Local Peer ID: ' + libp2p.peerId.toString());
   updatePeers();
@@ -200,7 +160,7 @@ connectBtn.addEventListener('click', async () => {
     let remotePeerMultiAddress = relayMaStr + '/p2p-circuit/webrtc/p2p/' + remotePeerStr
     console.log(remotePeerMultiAddress)
     input.value = remotePeerMultiAddress; // add for use another btn to dial for audio
-    // await libp2p.dial(multiaddr(remotePeerMultiAddress));
+    await libp2p.dial(multiaddr(remotePeerMultiAddress));
     updateStatus('no Dialing remote peer...');
 
     const relayMa = multiaddr(relayMaStr);
